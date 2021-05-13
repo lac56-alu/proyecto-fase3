@@ -1,10 +1,10 @@
-﻿/*----------------------------------------------------------------------------*/
+/*----------------------------------------------------------------------------*/
 /*  FICHERO:       calculaNormales.cu									          */
 /*  AUTOR:         Jorge Azorin											  */
 /*													                          */
 /*  RESUMEN												                      */
 /*  ~~~~~~~												                      */
-/* Ejercicio grupal para el cálculo de las normales de una superficie          */
+/* Ejercicio grupal para el c�lculo de las normales de una superficie          */
 /*----------------------------------------------------------------------------*/
 
 // includes, system
@@ -23,6 +23,9 @@
 #include <Windows.h>
 
 
+#define THREADS_PER_BLOCK 512
+
+
 
 #define ERROR_CHECK { cudaError_t err; if ((err = cudaGetLastError()) != cudaSuccess) { printf("CUDA error: %s, line %d\n", cudaGetErrorString(err), __LINE__);}}
 
@@ -30,18 +33,100 @@ typedef LARGE_INTEGER timeStamp;
 double getTime();
 
 /*----------------------------------------------------------------------------*/
-/*  FUNCION A PARALELIZAR  (versión secuencial-CPU)  				          */
-/*	Cálculo de las normales de una superficie definida por una                */
+/*  FUNCION A PARALELIZAR  (versi�n secuencial-CPU)  				          */
+/*	C�lculo de las normales de una superficie definida por una                */
 /*  una malla de vtotal x utotal puntos 3D                                    */
 /*----------------------------------------------------------------------------*/
 int CalculoNormalesCPU()
 {
+	    TPoint3D direct1, direct2, normal;
+		int vecindadU[9]={-1,0,1,1,1,0,-1,-1,-1}; // Vecindad 8 + 1 para calcular todas las rectas
+		int vecindadV[9]={-1,-1,-1,0,1,1,1,0,-1};
+		int vV,vU;
+		int numDir;
+		int oKdir1,oKdir2;
+		/* La vencidad es:
+		*--*--*
+		|  |  |
+		*--X--*
+		|  |  |
+		*--*--*
+		*/
+		int cont=0;
+
+		for (int u = 0; u<S.UPoints; u++)			// Recorrido de todos los puntos de la superficie
+		{
+			for (int v = 0; v<S.VPoints; v++)
+			{
+				normal.x=0;
+				normal.y=0;
+				normal.z=0;
+				numDir=0;
+				for (int nv = 0; nv < 8 ; nv ++)  // Para los puntos de la vecindad
+				{
+					    vV=v+vecindadV[nv];
+						vU=u+vecindadU[nv];
+						if (vV >= 0 && vU >=0 && vV<S.VPoints && vU<S.UPoints)
+						{
+							direct1.x=S.Buffer[v][u].x-S.Buffer[vV][vU].x;
+							direct1.y=S.Buffer[v][u].y-S.Buffer[vV][vU].y;
+							direct1.z=S.Buffer[v][u].z-S.Buffer[vV][vU].z;
+							oKdir1=1;
+						}else
+						{
+							direct1.x=0.0;
+							direct1.y=0.0;
+							direct1.z=0.0;
+							oKdir1=0;
+						}
+						vV=v+vecindadV[nv+1];
+						vU=v+vecindadU[nv+1];
+
+						if (vV >= 0 && vU >=0 && vV<S.VPoints && vU<S.UPoints)
+						{
+						   direct2.x=S.Buffer[v][u].x-S.Buffer[vV][vU].x;
+						   direct2.y=S.Buffer[v][u].y-S.Buffer[vV][vU].y;
+						   direct2.z=S.Buffer[v][u].z-S.Buffer[vV][vU].z;
+						   oKdir2=1;
+						}else
+						{
+							direct2.x=0.0;
+							direct2.y=0.0;
+							direct2.z=0.0;
+							oKdir2=0;
+						}
+						if (oKdir1 ==1 && oKdir2==1)
+						{
+						  normal.x +=  direct1.y*direct2.z-direct1.z*direct2.y;
+						  normal.y += direct1.x*direct2.z-direct1.z*direct2.x;
+						  normal.z += direct1.x*direct2.y-direct1.y*direct2.x;
+						  numDir++;
+						}
+				}
+				NormalUCPU[cont]=normal.x/(float)numDir;
+				NormalVCPU[cont]=normal.y/(float)numDir;
+				NormalWCPU[cont]=normal.z/(float)numDir;
+				cont++;
+			}
+		}
+
+	return OKCALC;									// Simulaci�n CORRECTA
+}
+
+// ---------------------------------------------------------------======================================
+// ---------------------------------------------------------------
+// FUNCION A IMPLEMENTAR POR EL GRUPO (paralelizaci�n de CalculoNormalesCPU)
+// ---------------------------------------------------------------
+// ---------------------------------------------------------------========================================
+
+__global__ void paralelizacionCUDA()  //float *d_NormalUGPU, float *d_NormalVGPU, float *d_NormalWGPU)
+{
 	TPoint3D direct1, direct2, normal;
-	int vecindadU[9] = { -1,0,1,1,1,0,-1,-1,-1 }; // Vecindad 8 + 1 para calcular todas las rectas
-	int vecindadV[9] = { -1,-1,-1,0,1,1,1,0,-1 };
-	int vV, vU;
+	int vecindadU[9]={-1,0,1,1,1,0,-1,-1,-1}; // Vecindad 8 + 1 para calcular todas las rectas
+	int vecindadV[9]={-1,-1,-1,0,1,1,1,0,-1};
+	int vV,vU;
 	int numDir;
-	int oKdir1, oKdir2;
+	int oKdir1,oKdir2;
 	/* La vencidad es:
 	*--*--*
 	|  |  |
@@ -49,87 +134,110 @@ int CalculoNormalesCPU()
 	|  |  |
 	*--*--*
 	*/
-	int cont = 0;
+	int cont=0;
 
-	for (int u = 0; u < S.UPoints; u++)			// Recorrido de todos los puntos de la superficie
+
+	const int i = threadIdx.x + blockIdx.x * blockDim.y;
+	const int j = threadIdx.y + blockIdx.y * blockDim.y;
+
+
+	if(i * j > 0)
 	{
-		for (int v = 0; v < S.VPoints; v++)
-		{
-			normal.x = 0;
-			normal.y = 0;
-			normal.z = 0;
-			numDir = 0;
-			for (int nv = 0; nv < 8; nv++)  // Para los puntos de la vecindad
-			{
-				vV = v + vecindadV[nv];
-				vU = u + vecindadU[nv];
-				if (vV >= 0 && vU >= 0 && vV < S.VPoints && vU < S.UPoints)
-				{
-					direct1.x = S.Buffer[v][u].x - S.Buffer[vV][vU].x;
-					direct1.y = S.Buffer[v][u].y - S.Buffer[vV][vU].y;
-					direct1.z = S.Buffer[v][u].z - S.Buffer[vV][vU].z;
-					oKdir1 = 1;
-				}
-				else
-				{
-					direct1.x = 0.0;
-					direct1.y = 0.0;
-					direct1.z = 0.0;
-					oKdir1 = 0;
-				}
-				vV = v + vecindadV[nv + 1];
-				vU = v + vecindadU[nv + 1];
+		for(int v = 0; v < S.VPoints; v++)
+		{ (i * (j + 1))
+			normal.x=0;
+			normal.y=0;
+			normal.z=0;
+			numDir=0;
 
-				if (vV >= 0 && vU >= 0 && vV < S.VPoints && vU < S.UPoints)
+			for (int nv = 0; nv < 8 ; nv ++)  // Para los puntos de la vecindad
+			{
+				vV=v+vecindadV[nv];
+				vU=(i * j)+vecindadU[nv];
+				if (vV >= 0 && vU >=0 && vV<S.VPoints && vU<S.UPoints)
 				{
-					direct2.x = S.Buffer[v][u].x - S.Buffer[vV][vU].x;
-					direct2.y = S.Buffer[v][u].y - S.Buffer[vV][vU].y;
-					direct2.z = S.Buffer[v][u].z - S.Buffer[vV][vU].z;
-					oKdir2 = 1;
-				}
-				else
+					direct1.x=S.Buffer[v][(i * j)].x-S.Buffer[vV][vU].x;
+					direct1.y=S.Buffer[v][(i * j)].y-S.Buffer[vV][vU].y;
+					direct1.z=S.Buffer[v][(i * j)].z-S.Buffer[vV][vU].z;
+					oKdir1=1;
+				}else
 				{
-					direct2.x = 0.0;
-					direct2.y = 0.0;
-					direct2.z = 0.0;
-					oKdir2 = 0;
+					direct1.x=0.0;
+					direct1.y=0.0;
+					direct1.z=0.0;
+					oKdir1=0;
 				}
-				if (oKdir1 == 1 && oKdir2 == 1)
+				vV=v+vecindadV[nv+1];
+				vU=v+vecindadU[nv+1];
+	
+				if (vV >= 0 && vU >=0 && vV<S.VPoints && vU<S.UPoints)
 				{
-					normal.x += direct1.y * direct2.z - direct1.z * direct2.y;
-					normal.y += direct1.x * direct2.z - direct1.z * direct2.x;
-					normal.z += direct1.x * direct2.y - direct1.y * direct2.x;
-					numDir++;
+				   direct2.x=S.Buffer[v][(i * j)].x-S.Buffer[vV][vU].x;
+				   direct2.y=S.Buffer[v][(i * j)].y-S.Buffer[vV][vU].y;
+				   direct2.z=S.Buffer[v][(i * j)].z-S.Buffer[vV][vU].z;
+				   oKdir2=1;
+				}else
+				{
+					direct2.x=0.0;
+					direct2.y=0.0;
+					direct2.z=0.0;
+					oKdir2=0;
 				}
+				if (oKdir1 ==1 && oKdir2==1)
+				{
+				  normal.x +=  direct1.y*direct2.z-direct1.z*direct2.y;
+				  normal.y += direct1.x*direct2.z-direct1.z*direct2.x;
+				  normal.z += direct1.x*direct2.y-direct1.y*direct2.x;
+				  numDir++;
+				}
+	
+
 			}
-			NormalUCPU[cont] = normal.x / (float)numDir;
-			NormalVCPU[cont] = normal.y / (float)numDir;
-			NormalWCPU[cont] = normal.z / (float)numDir;
+
+			NormalUGPU[cont]=normal.x/(float)numDir;
+			NormalVGPU[cont]=normal.y/(float)numDir;
+			NormalWGPU[cont]=normal.z/(float)numDir;
 			cont++;
 		}
+
 	}
 
-	return OKCALC;									// Simulación CORRECTA
+	return OKCALC;									// Simulaci�n CORRECTA
 }
 
-// ---------------------------------------------------------------
-// ---------------------------------------------------------------
-// FUNCION A IMPLEMENTAR POR EL GRUPO (paralelización de CalculoNormalesCPU)
-// ---------------------------------------------------------------
-// ---------------------------------------------------------------
 
-int CalculoNormalesGPU()
+
+ int CalculoNormalesGPU()
 {
-	return OKCALC;
-}
-// ---------------------------------------------------------------
-// ---------------------------------------------------------------
-// ---------------------------------------------------------------
-// ---------------------------------------------------------------
-// ---------------------------------------------------------------
+	//NI IDEA DE ESTO
+	dim3 block(S.UPoints / 16, 1, 1);
+	//dim3 blockDim(512);
+	dim3 grid(16);
 
-// Declaraciones adelantadas de funciones
-int LeerSuperficie(const char* fichero);
+/*
+	float *d_NormalUGPU, *d_NormalVGPU, *d_NormalWGPU;
+	cudaMalloc((void **) &d_NormalUGPU, numPuntos*sizeof(float));
+	cudaMalloc((void **) &d_NormalVGPU, numPuntos*sizeof(float));
+	cudaMalloc((void **) &d_NormalWGPU, numPuntos*sizeof(float));
+
+*/
+	// en grid -> number of parallel blocks in which we would like the device to execute our kernel
+	// en block -> el numero de threads con el que ejecutar el kernel
+	paralelizacionCUDA <<<grid, block>>> (); //d_NormalUGPU, d_NormalVGPU, d_NormalWGPU);
+
+
+
+	 return OKCALC;
+}
+ // ---------------------------------------------------------------========================================
+ // ---------------------------------------------------------------
+ // ---------------------------------------------------------------
+ // ---------------------------------------------------------------
+ //---------------------------------------------------------------========================================
+
+
+ // Declaraciones adelantadas de funciones
+ int LeerSuperficie(const char *fichero);
 
 
 
@@ -139,9 +247,6 @@ int LeerSuperficie(const char* fichero);
 void
 runTest(int argc, char** argv)
 {
-	argc = 2;
-	argv[0] = "15";
-	argv[1] = "test.for";
 
 
 	double gpu_start_time, gpu_end_time;
@@ -156,33 +261,33 @@ runTest(int argc, char** argv)
 	}
 
 	/* Apertura de Fichero */
-	printf("Cálculo de las normales de la superficie...\n");
+	printf("C�lculo de las normales de la superficie...\n");
 	/* Datos de la superficie */
-	if (LeerSuperficie((char*)argv[1]) == ERRORCALC)
+	if (LeerSuperficie((char *)argv[1]) == ERRORCALC)
 	{
 		fprintf(stderr, "Lectura de superficie incorrecta\n");
 		return;
 	}
 	int numPuntos;
-	numPuntos = S.UPoints * S.VPoints;
+	numPuntos=S.UPoints*S.VPoints;
 
-	// Creación buffer resultados para versiones CPU y GPU
-	NormalVCPU = (float*)malloc(numPuntos * sizeof(float));
-	NormalUCPU = (float*)malloc(numPuntos * sizeof(float));
-	NormalWCPU = (float*)malloc(numPuntos * sizeof(float));
-	NormalVGPU = (float*)malloc(numPuntos * sizeof(float));
-	NormalUGPU = (float*)malloc(numPuntos * sizeof(float));
-	NormalWGPU = (float*)malloc(numPuntos * sizeof(float));
+	// Creaci�n buffer resultados para versiones CPU y GPU
+	NormalVCPU = (float*)malloc(numPuntos*sizeof(float));
+	NormalUCPU = (float*)malloc(numPuntos*sizeof(float));
+    NormalWCPU = (float*)malloc(numPuntos*sizeof(float));
+	NormalVGPU = (float*)malloc(numPuntos*sizeof(float));
+	NormalUGPU = (float*)malloc(numPuntos*sizeof(float));
+	NormalWGPU = (float*)malloc(numPuntos*sizeof(float));
 
 	/* Algoritmo a paralelizar */
 	cpu_start_time = getTime();
 	if (CalculoNormalesCPU() == ERRORCALC)
 	{
-		fprintf(stderr, "Cálculo CPU incorrecta\n");
+		fprintf(stderr, "C�lculo CPU incorrecta\n");
 		BorrarSuperficie();
 		if (NormalVCPU != NULL) free(NormalVCPU);
 		if (NormalUCPU != NULL) free(NormalUCPU);
-		if (NormalWCPU != NULL) free(NormalUCPU);
+	    if (NormalWCPU != NULL) free(NormalUCPU);
 		if (NormalVGPU != NULL) free(NormalVGPU);
 		if (NormalWGPU != NULL) free(NormalVGPU);
 		if (NormalUGPU != NULL) free(NormalUGPU);		exit(1);
@@ -192,44 +297,44 @@ runTest(int argc, char** argv)
 	gpu_start_time = getTime();
 	if (CalculoNormalesGPU() == ERRORCALC)
 	{
-		fprintf(stderr, "Cálculo GPU incorrecta\n");
+		fprintf(stderr, "C�lculo GPU incorrecta\n");
 		BorrarSuperficie();
 		if (NormalVCPU != NULL) free(NormalVCPU);
 		if (NormalUCPU != NULL) free(NormalUCPU);
-		if (NormalWCPU != NULL) free(NormalUCPU);
+	    if (NormalWCPU != NULL) free(NormalUCPU);
 		if (NormalVGPU != NULL) free(NormalVGPU);
 		if (NormalUGPU != NULL) free(NormalUGPU);
 		if (NormalVGPU != NULL) free(NormalVGPU);
 		return;
 	}
 	gpu_end_time = getTime();
-	// Comparación de corrección
+	// Comparaci�n de correcci�n
 	int comprobar = OKCALC;
-	for (int i = 0; i < numPuntos; i++)
+	for (int i = 0; i<numPuntos; i++)
 	{
-		if (((int)NormalVCPU[i] * 1000 != (int)NormalVGPU[i]) * 1000 || ((int)NormalUCPU[i] * 1000 != (int)NormalUGPU[i] * 1000) || ((int)NormalWCPU[i] * 1000 != (int)NormalWGPU[i] * 1000))
+		if (((int)NormalVCPU[i]*1000 != (int)NormalVGPU[i])*1000 || ((int)NormalUCPU[i]*1000 != (int)NormalUGPU[i]*1000) || ((int)NormalWCPU[i]*1000 != (int)NormalWGPU[i]*1000))
 		{
 			comprobar = ERRORCALC;
-			fprintf(stderr, "Fallo en el punto %d, valor correcto V=%f U=%f W=%f\n", i, NormalVCPU[i], NormalUCPU[i], NormalWCPU[i]);
+			fprintf(stderr, "Fallo en el punto %d, valor correcto V=%f U=%f W=%f\n", i, NormalVCPU[i], NormalUCPU[i],NormalWCPU[i]);
 		}
 	}
 	// Impresion de resultados
 	if (comprobar == OKCALC)
 	{
-		printf("Cálculo correcto!\n");
+		printf("C�lculo correcto!\n");
 
 	}
-	// Impresión de resultados
-	printf("Tiempo ejecución GPU : %fs\n", \
+	// Impresi�n de resultados
+	printf("Tiempo ejecuci�n GPU : %fs\n", \
 		gpu_end_time - gpu_start_time);
-	printf("Tiempo de ejecución en la CPU : %fs\n", \
+	printf("Tiempo de ejecuci�n en la CPU : %fs\n", \
 		cpu_end_time - cpu_start_time);
-	printf("Se ha conseguido un factor de aceleración %fx utilizando CUDA\n", (cpu_end_time - cpu_start_time) / (gpu_end_time - gpu_start_time));
+	printf("Se ha conseguido un factor de aceleraci�n %fx utilizando CUDA\n", (cpu_end_time - cpu_start_time) / (gpu_end_time - gpu_start_time));
 	// Limpieza de buffers
 	BorrarSuperficie();
 	if (NormalVCPU != NULL) free(NormalVCPU);
 	if (NormalUCPU != NULL) free(NormalUCPU);
-	if (NormalWCPU != NULL) free(NormalWCPU);
+    if (NormalWCPU != NULL) free(NormalWCPU);
 	if (NormalVGPU != NULL) free(NormalVGPU);
 	if (NormalUGPU != NULL) free(NormalUGPU);
 	if (NormalWGPU != NULL) free(NormalWGPU);
@@ -256,32 +361,32 @@ double getTime()
 
 
 /*----------------------------------------------------------------------------*/
-/*	Función:  LeerSuperficie(char *fichero)						              */
+/*	Funci�n:  LeerSuperficie(char *fichero)						              */
 /*													                          */
 /*	          Lee los datos de la superficie de un fichero con formato .FOR   */
 /*----------------------------------------------------------------------------*/
-int LeerSuperficie(const char* fichero)
+int LeerSuperficie(const char *fichero)
 {
 	int i, j, count;		/* Variables de bucle */
-	int utotal, vtotal;		/* Variables de tamaño de superficie */
-	FILE* fpin; 			/* Fichero */
+	int utotal,vtotal;		/* Variables de tama�o de superficie */
+	FILE *fpin; 			/* Fichero */
 	double x, y, z;
 
 	/* Apertura de Fichero */
 	if ((fpin = fopen(fichero, "r")) == NULL) return ERRORCALC;
 	/* Lectura de cabecera */
-	if (fscanf(fpin, "Ancho=%d\n", &utotal) < 0) return ERRORCALC;
-	if (fscanf(fpin, "Alto=%d\n", &vtotal) < 0) return ERRORCALC;
-	if (utotal * vtotal <= 0) return ERRORCALC;
+	if (fscanf(fpin, "Ancho=%d\n", &utotal)<0) return ERRORCALC;
+	if (fscanf(fpin, "Alto=%d\n", &vtotal)<0) return ERRORCALC;
+	if (utotal*vtotal <= 0) return ERRORCALC;
 	/* Localizacion de comienzo */
 	if (feof(fpin)) return ERRORCALC;
-	/* Inicialización de parametros geometricos */
+	/* Inicializaci�n de parametros geometricos */
 	if (CrearSuperficie(utotal, vtotal) == ERRORCALC) return ERRORCALC;
 	/* Lectura de coordenadas */
 	count = 0;
-	for (i = 0; i < utotal; i++)
+	for (i = 0; i<utotal; i++)
 	{
-		for (j = 0; j < vtotal; j++)
+		for (j = 0; j<vtotal; j++)
 		{
 			if (!feof(fpin))
 			{
@@ -295,7 +400,7 @@ int LeerSuperficie(const char* fichero)
 		}
 	}
 	fclose(fpin);
-	if (count != utotal * vtotal) return ERRORCALC;
+	if (count != utotal*vtotal) return ERRORCALC;
 	return OKCALC;
 }
 
