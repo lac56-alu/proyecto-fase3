@@ -119,7 +119,7 @@ int CalculoNormalesCPU()
 // ---------------------------------------------------------------
 // ---------------------------------------------------------------========================================
 
-__global__ void paralelizacionCUDA()  //float *d_NormalUGPU, float *d_NormalVGPU, float *d_NormalWGPU)
+__global__ void paralelizacionCUDA(float *d_NormalUGPU, float *d_NormalVGPU, float *d_NormalWGPU, TSurf S)
 {
 	TPoint3D direct1, direct2, normal;
 	int vecindadU[9]={-1,0,1,1,1,0,-1,-1,-1}; // Vecindad 8 + 1 para calcular todas las rectas
@@ -144,7 +144,7 @@ __global__ void paralelizacionCUDA()  //float *d_NormalUGPU, float *d_NormalVGPU
 	if(i * j > 0)
 	{
 		for(int v = 0; v < S.VPoints; v++)
-		{ (i * (j + 1))
+		{
 			normal.x=0;
 			normal.y=0;
 			normal.z=0;
@@ -194,38 +194,43 @@ __global__ void paralelizacionCUDA()  //float *d_NormalUGPU, float *d_NormalVGPU
 
 			}
 
-			NormalUGPU[cont]=normal.x/(float)numDir;
-			NormalVGPU[cont]=normal.y/(float)numDir;
-			NormalWGPU[cont]=normal.z/(float)numDir;
+			d_NormalUGPU[cont]=normal.x/(float)numDir;
+			d_NormalVGPU[cont]=normal.y/(float)numDir;
+			d_NormalWGPU[cont]=normal.z/(float)numDir;
 			cont++;
 		}
 
 	}
 
-	return OKCALC;									// Simulaci�n CORRECTA
+	//return OKCALC;									// Simulaci�n CORRECTA
 }
 
 
 
- int CalculoNormalesGPU()
+ int CalculoNormalesGPU(int numPuntos)
 {
 	//NI IDEA DE ESTO
-	dim3 block(S.UPoints / 16, 1, 1);
+	dim3 block(512);
 	//dim3 blockDim(512);
-	dim3 grid(16);
+	dim3 grid(((S.UPoints+(block.x*16))/(block.x*16)));
 
-/*
+
 	float *d_NormalUGPU, *d_NormalVGPU, *d_NormalWGPU;
+	TSurf *d_S;
+	cudaMalloc((void **) &d_S, sizeof(TSurf));
 	cudaMalloc((void **) &d_NormalUGPU, numPuntos*sizeof(float));
 	cudaMalloc((void **) &d_NormalVGPU, numPuntos*sizeof(float));
 	cudaMalloc((void **) &d_NormalWGPU, numPuntos*sizeof(float));
 
-*/
+	cudaMemcpy(d_S, S, sizeof(TSurf), cudaMemcpyHostToDevice);
+
+
 	// en grid -> number of parallel blocks in which we would like the device to execute our kernel
 	// en block -> el numero de threads con el que ejecutar el kernel
-	paralelizacionCUDA <<<grid, block>>> (); //d_NormalUGPU, d_NormalVGPU, d_NormalWGPU);
+	paralelizacionCUDA<<<grid, block>>>(d_NormalUGPU, d_NormalVGPU, d_NormalWGPU, d_S);
 
-
+	free(S);
+	cudaFree(d_S);
 
 	 return OKCALC;
 }
@@ -295,7 +300,7 @@ runTest(int argc, char** argv)
 	cpu_end_time = getTime();
 	/* Algoritmo a implementar */
 	gpu_start_time = getTime();
-	if (CalculoNormalesGPU() == ERRORCALC)
+	if (CalculoNormalesGPU(numPuntos) == ERRORCALC)
 	{
 		fprintf(stderr, "C�lculo GPU incorrecta\n");
 		BorrarSuperficie();
