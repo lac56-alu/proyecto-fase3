@@ -119,7 +119,7 @@ int CalculoNormalesCPU()
 // ---------------------------------------------------------------
 // ---------------------------------------------------------------========================================
 
-__global__ void paralelizacionCUDA(float *d_NormalUGPU, float *d_NormalVGPU, float *d_NormalWGPU, TSurf S)
+__global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, double *d_NormalWGPU, TSurf *S)
 {
 	TPoint3D direct1, direct2, normal;
 	int vecindadU[9]={-1,0,1,1,1,0,-1,-1,-1}; // Vecindad 8 + 1 para calcular todas las rectas
@@ -143,7 +143,7 @@ __global__ void paralelizacionCUDA(float *d_NormalUGPU, float *d_NormalVGPU, flo
 
 	if(i * j > 0)
 	{
-		for(int v = 0; v < S.VPoints; v++)
+		for(int v = 0; v < S->VPoints; v++)
 		{
 			normal.x=0;
 			normal.y=0;
@@ -154,11 +154,11 @@ __global__ void paralelizacionCUDA(float *d_NormalUGPU, float *d_NormalVGPU, flo
 			{
 				vV=v+vecindadV[nv];
 				vU=(i * j)+vecindadU[nv];
-				if (vV >= 0 && vU >=0 && vV<S.VPoints && vU<S.UPoints)
+				if (vV >= 0 && vU >=0 && vV<S->VPoints && vU<S->UPoints)
 				{
-					direct1.x=S.Buffer[v][(i * j)].x-S.Buffer[vV][vU].x;
-					direct1.y=S.Buffer[v][(i * j)].y-S.Buffer[vV][vU].y;
-					direct1.z=S.Buffer[v][(i * j)].z-S.Buffer[vV][vU].z;
+					direct1.x=S->Buffer[v][(i * j)].x-S->Buffer[vV][vU].x;
+					direct1.y=S->Buffer[v][(i * j)].y-S->Buffer[vV][vU].y;
+					direct1.z=S->Buffer[v][(i * j)].z-S->Buffer[vV][vU].z;
 					oKdir1=1;
 				}else
 				{
@@ -170,11 +170,11 @@ __global__ void paralelizacionCUDA(float *d_NormalUGPU, float *d_NormalVGPU, flo
 				vV=v+vecindadV[nv+1];
 				vU=v+vecindadU[nv+1];
 	
-				if (vV >= 0 && vU >=0 && vV<S.VPoints && vU<S.UPoints)
+				if (vV >= 0 && vU >=0 && vV<S->VPoints && vU<S->UPoints)
 				{
-				   direct2.x=S.Buffer[v][(i * j)].x-S.Buffer[vV][vU].x;
-				   direct2.y=S.Buffer[v][(i * j)].y-S.Buffer[vV][vU].y;
-				   direct2.z=S.Buffer[v][(i * j)].z-S.Buffer[vV][vU].z;
+				   direct2.x=S->Buffer[v][(i * j)].x-S->Buffer[vV][vU].x;
+				   direct2.y=S->Buffer[v][(i * j)].y-S->Buffer[vV][vU].y;
+				   direct2.z=S->Buffer[v][(i * j)].z-S->Buffer[vV][vU].z;
 				   oKdir2=1;
 				}else
 				{
@@ -215,21 +215,22 @@ __global__ void paralelizacionCUDA(float *d_NormalUGPU, float *d_NormalVGPU, flo
 	dim3 grid(((S.UPoints+(block.x*16))/(block.x*16)));
 
 
-	float *d_NormalUGPU, *d_NormalVGPU, *d_NormalWGPU;
-	TSurf *d_S;
-	cudaMalloc((void **) &d_S, sizeof(TSurf));
-	cudaMalloc((void **) &d_NormalUGPU, numPuntos*sizeof(float));
-	cudaMalloc((void **) &d_NormalVGPU, numPuntos*sizeof(float));
-	cudaMalloc((void **) &d_NormalWGPU, numPuntos*sizeof(float));
+	double *d_NormalUGPU, *d_NormalVGPU, *d_NormalWGPU;
+	TSurf* d_S = &S;
+	TSurf* d_SGPU;
+	cudaMalloc((void**)&d_SGPU, sizeof(TSurf));
+	cudaMalloc((void **) &d_NormalUGPU, numPuntos*sizeof(double));
+	cudaMalloc((void **) &d_NormalVGPU, numPuntos*sizeof(double));
+	cudaMalloc((void **) &d_NormalWGPU, numPuntos*sizeof(double));
 
-	cudaMemcpy(d_S, S, sizeof(TSurf), cudaMemcpyHostToDevice);
+	cudaMemcpy((void*)d_S, (void*)d_SGPU, sizeof(TSurf), cudaMemcpyHostToDevice);
 
 
 	// en grid -> number of parallel blocks in which we would like the device to execute our kernel
 	// en block -> el numero de threads con el que ejecutar el kernel
 	paralelizacionCUDA<<<grid, block>>>(d_NormalUGPU, d_NormalVGPU, d_NormalWGPU, d_S);
 
-	free(S);
+	free(d_S);
 	cudaFree(d_S);
 
 	 return OKCALC;
@@ -252,7 +253,8 @@ __global__ void paralelizacionCUDA(float *d_NormalUGPU, float *d_NormalVGPU, flo
 void
 runTest(int argc, char** argv)
 {
-
+	argc = 2;
+	argv[0] = "test.for";
 
 	double gpu_start_time, gpu_end_time;
 	double cpu_start_time, cpu_end_time;
@@ -266,7 +268,7 @@ runTest(int argc, char** argv)
 	}
 
 	/* Apertura de Fichero */
-	printf("C�lculo de las normales de la superficie...\n");
+	printf("Cálculo de las normales de la superficie...\n");
 	/* Datos de la superficie */
 	if (LeerSuperficie((char *)argv[1]) == ERRORCALC)
 	{
@@ -288,7 +290,7 @@ runTest(int argc, char** argv)
 	cpu_start_time = getTime();
 	if (CalculoNormalesCPU() == ERRORCALC)
 	{
-		fprintf(stderr, "C�lculo CPU incorrecta\n");
+		fprintf(stderr, "Cálculo CPU incorrecta\n");
 		BorrarSuperficie();
 		if (NormalVCPU != NULL) free(NormalVCPU);
 		if (NormalUCPU != NULL) free(NormalUCPU);
@@ -302,7 +304,7 @@ runTest(int argc, char** argv)
 	gpu_start_time = getTime();
 	if (CalculoNormalesGPU(numPuntos) == ERRORCALC)
 	{
-		fprintf(stderr, "C�lculo GPU incorrecta\n");
+		fprintf(stderr, "Cálculo GPU incorrecta\n");
 		BorrarSuperficie();
 		if (NormalVCPU != NULL) free(NormalVCPU);
 		if (NormalUCPU != NULL) free(NormalUCPU);
@@ -326,13 +328,13 @@ runTest(int argc, char** argv)
 	// Impresion de resultados
 	if (comprobar == OKCALC)
 	{
-		printf("C�lculo correcto!\n");
+		printf("Cálculo correcto!\n");
 
 	}
 	// Impresi�n de resultados
-	printf("Tiempo ejecuci�n GPU : %fs\n", \
+	printf("Tiempo ejecución GPU : %fs\n", \
 		gpu_end_time - gpu_start_time);
-	printf("Tiempo de ejecuci�n en la CPU : %fs\n", \
+	printf("Tiempo de ejecución en la CPU : %fs\n", \
 		cpu_end_time - cpu_start_time);
 	printf("Se ha conseguido un factor de aceleraci�n %fx utilizando CUDA\n", (cpu_end_time - cpu_start_time) / (gpu_end_time - gpu_start_time));
 	// Limpieza de buffers
