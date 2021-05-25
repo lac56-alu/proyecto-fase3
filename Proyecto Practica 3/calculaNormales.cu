@@ -21,6 +21,8 @@
 #include <device_launch_parameters.h>
 #include "calculaNormales.h"
 #include <Windows.h>
+#include <iostream>
+#include <iostream>
 
 
 #define THREADS_PER_BLOCK 512
@@ -119,8 +121,8 @@ int CalculoNormalesCPU()
 // ---------------------------------------------------------------
 // ---------------------------------------------------------------========================================
 
-__global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, double *d_NormalWGPU, TSurf *S)
-{
+__global__ void paralelizacionCUDA(float *&d_NormalUGPU, float *&d_NormalVGPU, float *&d_NormalWGPU, TSurf *S)
+{/**/
 	TPoint3D direct1, direct2, normal;
 	int vecindadU[9]={-1,0,1,1,1,0,-1,-1,-1}; // Vecindad 8 + 1 para calcular todas las rectas
 	int vecindadV[9]={-1,-1,-1,0,1,1,1,0,-1};
@@ -137,14 +139,14 @@ __global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, d
 	int cont=0;
 
 
-	const int i = threadIdx.x + blockIdx.x * blockDim.y;
-	const int j = threadIdx.y + blockIdx.y * blockDim.y;
 
+	//u = n
+	//v = i
 
-	if(i * j > 0)
-	{
-		for(int v = 0; v < S->VPoints; v++)
-		{
+	
+	int n = threadIdx.x + blockIdx.x * blockDim.x;
+	int i = threadIdx.y + blockIdx.y * blockDim.y;
+
 			normal.x=0;
 			normal.y=0;
 			normal.z=0;
@@ -152,13 +154,13 @@ __global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, d
 
 			for (int nv = 0; nv < 8 ; nv ++)  // Para los puntos de la vecindad
 			{
-				vV=v+vecindadV[nv];
-				vU=(i * j)+vecindadU[nv];
+				vV=i+vecindadV[nv];
+				vU=n+vecindadU[nv];
 				if (vV >= 0 && vU >=0 && vV<S->VPoints && vU<S->UPoints)
 				{
-					direct1.x=S->Buffer[v][(i * j)].x-S->Buffer[vV][vU].x;
-					direct1.y=S->Buffer[v][(i * j)].y-S->Buffer[vV][vU].y;
-					direct1.z=S->Buffer[v][(i * j)].z-S->Buffer[vV][vU].z;
+					direct1.x=S->Buffer[i][n].x-S->Buffer[vV][vU].x;
+					direct1.y=S->Buffer[i][n].y-S->Buffer[vV][vU].y;
+					direct1.z=S->Buffer[i][n].z-S->Buffer[vV][vU].z;
 					oKdir1=1;
 				}else
 				{
@@ -167,14 +169,14 @@ __global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, d
 					direct1.z=0.0;
 					oKdir1=0;
 				}
-				vV=v+vecindadV[nv+1];
-				vU=v+vecindadU[nv+1];
+				vV=i+vecindadV[nv+1];
+				vU=i+vecindadU[nv+1];
 	
 				if (vV >= 0 && vU >=0 && vV<S->VPoints && vU<S->UPoints)
 				{
-				   direct2.x=S->Buffer[v][(i * j)].x-S->Buffer[vV][vU].x;
-				   direct2.y=S->Buffer[v][(i * j)].y-S->Buffer[vV][vU].y;
-				   direct2.z=S->Buffer[v][(i * j)].z-S->Buffer[vV][vU].z;
+				   direct2.x=S->Buffer[i][n].x-S->Buffer[vV][vU].x;
+				   direct2.y=S->Buffer[i][n].y-S->Buffer[vV][vU].y;
+				   direct2.z=S->Buffer[i][n].z-S->Buffer[vV][vU].z;
 				   oKdir2=1;
 				}else
 				{
@@ -198,9 +200,6 @@ __global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, d
 			d_NormalVGPU[cont]=normal.y/(float)numDir;
 			d_NormalWGPU[cont]=normal.z/(float)numDir;
 			cont++;
-		}
-
-	}
 
 	//return OKCALC;									// Simulaci�n CORRECTA
 }
@@ -209,19 +208,17 @@ __global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, d
 
  int CalculoNormalesGPU(int numPuntos)
 {
-	//NI IDEA DE ESTO
-	dim3 block(512);
-	//dim3 blockDim(512);
-	dim3 grid(((S.UPoints+(block.x*16))/(block.x*16)));
+	dim3 block(16,16);
+	dim3 grid (  (numPuntos +15)/16,  (numPuntos +15)/16  );
 
 
-	double *d_NormalUGPU, *d_NormalVGPU, *d_NormalWGPU;
+	float *d_NormalUGPU, *d_NormalVGPU, *d_NormalWGPU;
 	TSurf* d_S = &S;
 	TSurf* d_SGPU;
 	cudaMalloc((void**)&d_SGPU, sizeof(TSurf));
-	cudaMalloc((void **) &d_NormalUGPU, numPuntos*sizeof(double));
-	cudaMalloc((void **) &d_NormalVGPU, numPuntos*sizeof(double));
-	cudaMalloc((void **) &d_NormalWGPU, numPuntos*sizeof(double));
+	cudaMalloc((void **) &d_NormalUGPU, numPuntos*sizeof(float));
+	cudaMalloc((void **) &d_NormalVGPU, numPuntos*sizeof(float));
+	cudaMalloc((void **) &d_NormalWGPU, numPuntos*sizeof(float));
 
 	cudaMemcpy((void*)d_S, (void*)d_SGPU, sizeof(TSurf), cudaMemcpyHostToDevice);
 
@@ -230,9 +227,18 @@ __global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, d
 	// en block -> el numero de threads con el que ejecutar el kernel
 	paralelizacionCUDA<<<grid, block>>>(d_NormalUGPU, d_NormalVGPU, d_NormalWGPU, d_S);
 
-	free(d_S);
-	cudaFree(d_S);
+	cudaThreadSynchronize();
 
+	cudaMemcpy(NormalUGPU, d_NormalUGPU, numPuntos * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(NormalVGPU, d_NormalVGPU, numPuntos * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(NormalWGPU, d_NormalWGPU, numPuntos * sizeof(float), cudaMemcpyDeviceToHost);
+
+	cudaFree(d_SGPU);
+	cudaFree(d_NormalUGPU);
+	cudaFree(d_NormalVGPU);
+	cudaFree(d_NormalWGPU);
+
+	
 	 return OKCALC;
 }
  // ---------------------------------------------------------------========================================
@@ -253,8 +259,6 @@ __global__ void paralelizacionCUDA(double *d_NormalUGPU, double *d_NormalVGPU, d
 void
 runTest(int argc, char** argv)
 {
-	argc = 2;
-	argv[0] = "test.for";
 
 	double gpu_start_time, gpu_end_time;
 	double cpu_start_time, cpu_end_time;
@@ -278,7 +282,7 @@ runTest(int argc, char** argv)
 	int numPuntos;
 	numPuntos=S.UPoints*S.VPoints;
 
-	// Creaci�n buffer resultados para versiones CPU y GPU
+	// Creación buffer resultados para versiones CPU y GPU
 	NormalVCPU = (float*)malloc(numPuntos*sizeof(float));
 	NormalUCPU = (float*)malloc(numPuntos*sizeof(float));
     NormalWCPU = (float*)malloc(numPuntos*sizeof(float));
@@ -323,6 +327,10 @@ runTest(int argc, char** argv)
 		{
 			comprobar = ERRORCALC;
 			fprintf(stderr, "Fallo en el punto %d, valor correcto V=%f U=%f W=%f\n", i, NormalVCPU[i], NormalUCPU[i],NormalWCPU[i]);
+			fprintf(stderr, "Valores GPU %d, valores obtenidos V=%f U=%f W=%f\n", i, NormalVGPU[i], NormalUGPU[i], NormalWGPU[i]);
+			//std::cout << "\n";
+
+
 		}
 	}
 	// Impresion de resultados
@@ -351,6 +359,8 @@ runTest(int argc, char** argv)
 int
 main(int argc, char** argv)
 {
+	argc = 2;
+	argv[1] = "test1.for";
 	runTest(argc, argv);
 	getchar();
 }
@@ -384,6 +394,8 @@ int LeerSuperficie(const char *fichero)
 	/* Lectura de cabecera */
 	if (fscanf(fpin, "Ancho=%d\n", &utotal)<0) return ERRORCALC;
 	if (fscanf(fpin, "Alto=%d\n", &vtotal)<0) return ERRORCALC;
+	std::cout << utotal;
+	std::cout << vtotal;
 	if (utotal*vtotal <= 0) return ERRORCALC;
 	/* Localizacion de comienzo */
 	if (feof(fpin)) return ERRORCALC;
